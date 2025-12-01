@@ -41,9 +41,6 @@ const Login = () => {
           <CardTitle className="text-2xl font-bold text-center">
             Sistema MikroTik
           </CardTitle>
-          <CardDescription className="text-center">
-            Ingrese sus credenciales para acceder
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
