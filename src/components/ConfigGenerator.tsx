@@ -90,14 +90,32 @@ const ConfigGenerator = () => {
             usedWGIPs.add(parseInt(wgIPMatch[1]));
           }
           
-          // Extraer LANs
-          const lans = peer["allowed-address"]
+          // Extraer LANs con mejor manejo de formato
+          const allowedAddresses = peer["allowed-address"] || "";
+          const lans = allowedAddresses
             .split(',')
-            .filter((addr: string) => !addr.includes('100.100.100') && !addr.includes('172.16.100'))
-            .map((addr: string) => addr.trim());
+            .map((addr: string) => addr.trim())
+            .filter((addr: string) => {
+              // Filtrar solo direcciones de red privada (no WG ni monitoreo)
+              return !addr.includes('100.100.100') && 
+                     !addr.includes('172.16.100') && 
+                     addr.includes('192.168.');
+            })
+            .map((addr: string) => {
+              // Normalizar formato: extraer base de red (192.168.X)
+              const match = addr.match(/192\.168\.(\d+)\./);
+              if (match) {
+                return `192.168.${match[1]}.0/24`;
+              }
+              return addr;
+            });
           
-          lans.forEach((lan: string) => usedLANs.add(lan));
+          lans.forEach((lan: string) => {
+            if (lan) usedLANs.add(lan);
+          });
         });
+
+        console.log('LANs ocupadas detectadas:', Array.from(usedLANs).sort());
 
         // MCs estáticos y DDNS reservados
         const DDNS_RESERVED_MCS = [2, 7, 14, 20, 26, 46, 62, 66, 70];
@@ -117,6 +135,8 @@ const ConfigGenerator = () => {
         // Encontrar siguiente LAN disponible
         const nextLAN = Array.from({ length: 200 }, (_, idx) => `192.168.${idx + 10}`)
           .find(lan => !usedLANs.has(`${lan}.0/24`)) || "192.168.10";
+
+        console.log('LAN sugerida:', `${nextLAN}.0/24`);
 
         setSuggestedMC(nextMC);
         setSuggestedIP(nextWGIP);
