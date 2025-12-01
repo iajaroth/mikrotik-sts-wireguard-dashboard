@@ -108,9 +108,19 @@ const MonitorEnlaces = () => {
       const lans = peer["allowed-address"]
         .split(',')
         .filter(addr => !addr.includes('100.100.100') && !addr.includes('172.16.100'))
-        .map(addr => addr.trim());
+        .map(addr => {
+          const trimmed = addr.trim();
+          // Si encuentra 192.168.X en cualquier formato, normalizar a /24
+          const match = trimmed.match(/192\.168\.(\d+)/);
+          if (match) {
+            return `192.168.${match[1]}.0/24`;
+          }
+          return trimmed;
+        });
 
-      lans.forEach(lan => usedLANs.add(lan));
+      lans.forEach(lan => {
+        if (lan) usedLANs.add(lan);
+      });
 
       const isActive = peer["last-handshake"] && 
                       !peer["last-handshake"].includes('h') && 
@@ -148,12 +158,15 @@ const MonitorEnlaces = () => {
     STATIC_OVERRIDES.forEach(({ mcNumber, lan }) => {
       if (!usedMCs.has(mcNumber)) {
         usedMCs.add(mcNumber);
-        usedLANs.add(lan);
+        // Normalizar LAN estática a formato /24 si es 192.168.X
+        const match = lan.match(/192\.168\.(\d+)/);
+        const normalizedLan = match ? `192.168.${match[1]}.0/24` : lan;
+        usedLANs.add(normalizedLan);
         processedPeers.push({
           id: `static-${mcNumber}`,
           name: `MC${String(mcNumber).padStart(2, '0')}`,
           wgIP: "N/A",
-          lans: [lan],
+          lans: [normalizedLan],
           status: 'static-override',
           lastHandshake: "N/A",
           comment: `Manual: ${lan}`,

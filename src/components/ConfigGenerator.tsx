@@ -114,7 +114,8 @@ const ConfigGenerator = () => {
                      addr.includes('192.168.');
             })
             .map((addr: string) => {
-              // Normalizar formato: extraer base de red (192.168.X)
+              // Normalizar formato: si encuentra 192.168.X en cualquier formato,
+              // marcar toda la red /24 como ocupada
               const match = addr.match(/192\.168\.(\d+)\./);
               if (match) {
                 return `192.168.${match[1]}.0/24`;
@@ -133,19 +134,16 @@ const ConfigGenerator = () => {
         STATIC_OVERRIDES.forEach(({ lan }) => {
           // Normalizar el formato de LAN estática
           if (lan.includes('192.168.') && !lan.includes(':')) {
-            // Si es una red privada sin puerto, normalizar a formato /24
-            if (!lan.includes('/24')) {
-              const match = lan.match(/192\.168\.(\d+)\./);
-              if (match) {
-                usedLANs.add(`192.168.${match[1]}.0/24`);
-              }
-            } else {
-              usedLANs.add(lan);
+            // Si es una red privada sin puerto, extraer base y marcar /24 completo
+            const match = lan.match(/192\.168\.(\d+)/);
+            if (match) {
+              usedLANs.add(`192.168.${match[1]}.0/24`);
             }
           }
         });
 
         console.log('LANs ocupadas (incluyendo estáticas):', Array.from(usedLANs).sort());
+        console.log('Total de redes /24 ocupadas:', usedLANs.size);
 
         // MCs estáticos y DDNS reservados
         const DDNS_RESERVED_MCS = [2, 7, 14, 20, 26, 46, 62, 66, 70];
