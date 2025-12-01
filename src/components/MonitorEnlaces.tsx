@@ -144,11 +144,23 @@ const MonitorEnlaces = () => {
       });
     });
 
+    // Agregar LANs de STATIC_OVERRIDES al conjunto de LANs usadas
+    STATIC_OVERRIDES.forEach(({ lan }) => {
+      // Normalizar formato para 192.168.X.0/24
+      if (lan.includes('192.168.') && !lan.includes(':')) {
+        const match = lan.match(/192\.168\.(\d+)\./);
+        if (match) {
+          usedLANs.add(`192.168.${match[1]}.0/24`);
+        } else if (lan.includes('/24')) {
+          usedLANs.add(lan);
+        }
+      }
+    });
+
     // Agregar estáticos que no están en peers
     STATIC_OVERRIDES.forEach(({ mcNumber, lan }) => {
       if (!usedMCs.has(mcNumber)) {
         usedMCs.add(mcNumber);
-        usedLANs.add(lan);
         processedPeers.push({
           id: `static-${mcNumber}`,
           name: `MC${String(mcNumber).padStart(2, '0')}`,
