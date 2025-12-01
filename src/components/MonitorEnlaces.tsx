@@ -300,15 +300,18 @@ const MonitorEnlaces = () => {
 
         switch (sortColumn) {
           case 'name':
-            aValue = a.name;
-            bValue = b.name;
+            // Extraer número del MC para ordenar numéricamente
+            const aMCMatch = a.name.match(/MC(\d+)/);
+            const bMCMatch = b.name.match(/MC(\d+)/);
+            aValue = aMCMatch ? parseInt(aMCMatch[1]) : 9999;
+            bValue = bMCMatch ? parseInt(bMCMatch[1]) : 9999;
             break;
           case 'wgIP':
             // Extraer número de IP para ordenar correctamente
-            const aMatch = a.wgIP.match(/100\.100\.100\.(\d+)/);
-            const bMatch = b.wgIP.match(/100\.100\.100\.(\d+)/);
-            aValue = aMatch ? parseInt(aMatch[1]) : 0;
-            bValue = bMatch ? parseInt(bMatch[1]) : 0;
+            const aIPMatch = a.wgIP.match(/100\.100\.100\.(\d+)/);
+            const bIPMatch = b.wgIP.match(/100\.100\.100\.(\d+)/);
+            aValue = aIPMatch ? parseInt(aIPMatch[1]) : 9999;
+            bValue = bIPMatch ? parseInt(bIPMatch[1]) : 9999;
             break;
           case 'lans':
             aValue = a.lans.join(',');
