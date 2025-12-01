@@ -1,0 +1,323 @@
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2, RefreshCw } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+
+interface WireGuardPeer {
+  ".id": string;
+  "allowed-address": string;
+  "client-endpoint": string;
+  comment?: string;
+  "current-endpoint-address": string;
+  interface: string;
+  "last-handshake"?: string;
+  name?: string;
+  disabled?: boolean;
+}
+
+interface ProcessedPeer {
+  id: string;
+  name: string;
+  wgIP: string;
+  lans: string[];
+  status: string;
+  lastHandshake: string;
+  comment: string;
+  endpointAddress: string;
+}
+
+const DDNS_RESERVED_MCS = [2, 7, 14, 20, 26, 46, 62, 66, 70];
+const STATIC_OVERRIDES = [
+  { mcNumber: 5, lan: '172.16.100.26' },
+  { mcNumber: 8, lan: '190.2.221.40:10554' },
+  { mcNumber: 19, lan: '192.168.13.0/24' },
+  { mcNumber: 21, lan: '201.193.161.165' },
+  { mcNumber: 22, lan: '192.168.11.0/24' },
+  { mcNumber: 31, lan: '177.93.6.24' },
+  { mcNumber: 38, lan: '201.192.162.70:5554' },
+  { mcNumber: 63, lan: '177.93.31.175' },
+];
+
+const MonitorEnlaces = () => {
+  const { toast } = useToast();
+  const [peers, setPeers] = useState<ProcessedPeer[]>([]);
+  const [filteredPeers, setFilteredPeers] = useState<ProcessedPeer[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [stats, setStats] = useState({
+    total: 0,
+    active: 0,
+    inactive: 0,
+    reserved: 0,
+    static: 0,
+    available: 0,
+  });
+
+  const fetchPeers = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('mikrotik-fetch');
+      
+      if (error) throw error;
+      
+      if (data.success) {
+        const processed = processPeers(data.data);
+        setPeers(processed);
+        setFilteredPeers(processed);
+        calculateStats(processed);
+        toast({
+          title: "Datos actualizados",
+          description: `${processed.length} enlaces cargados correctamente`,
+        });
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      toast({
+        title: "Error al cargar datos",
+        description: error instanceof Error ? error.message : "Error desconocido",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const processPeers = (rawPeers: WireGuardPeer[]): ProcessedPeer[] => {
+    return rawPeers.map((peer) => {
+      const name = peer.name || peer.comment || "Sin nombre";
+      const wgIPMatch = peer["allowed-address"].match(/(\d+\.\d+\.\d+\.\d+)/);
+      const wgIP = wgIPMatch ? wgIPMatch[1] : "N/A";
+      
+      const lans = peer["allowed-address"]
+        .split(',')
+        .filter(addr => !addr.includes('100.100.100') && !addr.includes('172.16.100'))
+        .map(addr => addr.trim());
+
+      const isActive = peer["last-handshake"] && 
+                      !peer["last-handshake"].includes('h') && 
+                      !peer["last-handshake"].includes('d') &&
+                      !peer["last-handshake"].includes('w');
+
+      let status = isActive ? 'active' : 'inactive';
+      
+      const mcMatch = name.match(/MC(\d+)/i);
+      if (mcMatch) {
+        const mcNum = parseInt(mcMatch[1]);
+        if (DDNS_RESERVED_MCS.includes(mcNum)) {
+          status = 'reserved-ddns';
+        }
+        if (STATIC_OVERRIDES.some(s => s.mcNumber === mcNum)) {
+          status = 'static-override';
+        }
+      }
+
+      return {
+        id: peer[".id"],
+        name,
+        wgIP,
+        lans,
+        status,
+        lastHandshake: peer["last-handshake"] || "never",
+        comment: peer.comment || "",
+        endpointAddress: peer["current-endpoint-address"] || "N/A",
+      };
+    });
+  };
+
+  const calculateStats = (peersList: ProcessedPeer[]) => {
+    const stats = {
+      total: peersList.length,
+      active: peersList.filter(p => p.status === 'active').length,
+      inactive: peersList.filter(p => p.status === 'inactive').length,
+      reserved: peersList.filter(p => p.status === 'reserved-ddns').length,
+      static: peersList.filter(p => p.status === 'static-override').length,
+      available: 200 - peersList.length,
+    };
+    setStats(stats);
+  };
+
+  const getStatusBadge = (status: string) => {
+    const variants: Record<string, { variant: any; label: string }> = {
+      'active': { variant: 'default', label: '✅ Activo' },
+      'inactive': { variant: 'secondary', label: '⚠️ Inactivo' },
+      'reserved-ddns': { variant: 'outline', label: '🔒 DDNS' },
+      'static-override': { variant: 'destructive', label: '🌐 Estático' },
+    };
+    const config = variants[status] || { variant: 'outline', label: status };
+    return <Badge variant={config.variant}>{config.label}</Badge>;
+  };
+
+  useEffect(() => {
+    fetchPeers();
+  }, []);
+
+  useEffect(() => {
+    let filtered = peers;
+
+    if (searchTerm) {
+      filtered = filtered.filter(peer =>
+        peer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        peer.wgIP.includes(searchTerm) ||
+        peer.comment.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    if (filterStatus !== 'all') {
+      filtered = filtered.filter(peer => peer.status === filterStatus);
+    }
+
+    setFilteredPeers(filtered);
+  }, [searchTerm, filterStatus, peers]);
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Monitor de Enlaces WireGuard</CardTitle>
+              <CardDescription>Datos en tiempo real desde mikrotik-sts.cr-safe.com</CardDescription>
+            </div>
+            <Button onClick={fetchPeers} disabled={loading} className="gap-2">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Actualizar
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-2xl font-bold text-primary">{stats.total}</div>
+                <p className="text-xs text-muted-foreground">Total Enlaces</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-2xl font-bold text-green-600">{stats.active}</div>
+                <p className="text-xs text-muted-foreground">✅ Activos</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-2xl font-bold text-yellow-600">{stats.inactive}</div>
+                <p className="text-xs text-muted-foreground">⚠️ Inactivos</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-2xl font-bold text-blue-600">{stats.reserved}</div>
+                <p className="text-xs text-muted-foreground">🔒 DDNS</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-2xl font-bold text-purple-600">{stats.static}</div>
+                <p className="text-xs text-muted-foreground">🌐 Estático</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-2xl font-bold text-gray-600">{stats.available}</div>
+                <p className="text-xs text-muted-foreground">🆓 Disponibles</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-4">
+            <Input
+              placeholder="🔍 Buscar por ID, IP, o comentario..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                variant={filterStatus === 'all' ? 'default' : 'outline'}
+                onClick={() => setFilterStatus('all')}
+                size="sm"
+              >
+                Todos
+              </Button>
+              <Button
+                variant={filterStatus === 'active' ? 'default' : 'outline'}
+                onClick={() => setFilterStatus('active')}
+                size="sm"
+              >
+                ✅ Activos
+              </Button>
+              <Button
+                variant={filterStatus === 'inactive' ? 'default' : 'outline'}
+                onClick={() => setFilterStatus('inactive')}
+                size="sm"
+              >
+                ⚠️ Inactivos
+              </Button>
+              <Button
+                variant={filterStatus === 'reserved-ddns' ? 'default' : 'outline'}
+                onClick={() => setFilterStatus('reserved-ddns')}
+                size="sm"
+              >
+                🔒 DDNS
+              </Button>
+              <Button
+                variant={filterStatus === 'static-override' ? 'default' : 'outline'}
+                onClick={() => setFilterStatus('static-override')}
+                size="sm"
+              >
+                🌐 Estático
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-md border mt-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>ID</TableHead>
+                  <TableHead>IP WireGuard</TableHead>
+                  <TableHead>LANs</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead>Último Handshake</TableHead>
+                  <TableHead>Comentario</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredPeers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">
+                      {loading ? "Cargando..." : "No se encontraron enlaces"}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredPeers.map((peer) => (
+                    <TableRow key={peer.id}>
+                      <TableCell className="font-medium">{peer.name}</TableCell>
+                      <TableCell className="font-mono text-sm">{peer.wgIP}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {peer.lans.length > 0 ? peer.lans.join(', ') : '-'}
+                      </TableCell>
+                      <TableCell>{getStatusBadge(peer.status)}</TableCell>
+                      <TableCell>{peer.lastHandshake}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{peer.comment || '-'}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default MonitorEnlaces;
