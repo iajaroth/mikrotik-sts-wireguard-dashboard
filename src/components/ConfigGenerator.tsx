@@ -8,9 +8,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Copy, Download, Lightbulb } from "lucide-react";
+import { Copy, Download, Lightbulb, FileText, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
 
 const ConfigGenerator = () => {
   const { toast } = useToast();
@@ -27,12 +28,20 @@ const ConfigGenerator = () => {
   const [cameraType, setCameraType] = useState("Dahua");
   const [numCameras, setNumCameras] = useState(1);
   const [cameraIPs, setCameraIPs] = useState<string[]>([""]);
-  const [generatedConfig, setGeneratedConfig] = useState("");
   const [showResults, setShowResults] = useState(false);
   const [suggestedIP, setSuggestedIP] = useState<number | null>(null);
   const [suggestedLAN, setSuggestedLAN] = useState<string>("");
   const [suggestedMC, setSuggestedMC] = useState<number | null>(null);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
+  const [configSections, setConfigSections] = useState<{
+    summary: { clientID: string; wgIP: string; interface: string; lanNetwork: string; routerIP: string; dhcpPool: string; dns: string; cameras: string; portBase: string; watchdog: string; };
+    base: string;
+    wireguard: string;
+    dnat: string;
+    watchdog: string;
+    serverCommands: string;
+    cameraURLs: string;
+  } | null>(null);
 
   useEffect(() => {
     const newCameraIPs = Array(numCameras).fill("").map((_, i) => cameraIPs[i] || "");
@@ -186,8 +195,7 @@ const ConfigGenerator = () => {
     if (configMode === "dnat" && cameraIPs.filter(ip => ip.trim()).length === 0) return "";
 
     const portBase = 8000 + (parseInt(clientIPSuffix) * 10);
-    let config = `
-# ================================================================
+    let config = `# ================================================================
 # CONFIGURACION DNAT PARA CAMARAS ${cameraType}
 # Cliente: ${clientID}
 # Base de puertos: ${portBase}
@@ -212,6 +220,132 @@ const ConfigGenerator = () => {
     return config;
   };
 
+  const generateWatchdogConfig = () => {
+    return `# WATCHDOG NO INTRUSIVO - RESET DE SOCKET UDP (PORT TOGGLE)
+# En lugar de apagar la interfaz, cambiamos el puerto de escucha
+# para forzar al kernel a reiniciar el socket UDP sin tirar la interfaz.
+# ================================================================
+
+# Script: Monitorizacion y Port Toggle
+/system script add name=watchdog-wg-socket-reset policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source={
+:local wgInterface "WIREGUARD-${clientID}"
+:local serverIP "100.100.100.1"
+:local clientID "${clientID}"
+:local originalPort 13231
+:local togglePort 13230
+
+# 1. Verificar conectividad
+:if ([/ping \\$serverIP count=5 interval=1s] = 0) do={
+    :log warning "[\\$clientID Watchdog] CONEXION PERDIDA. Iniciando Reset de Socket (Port Toggle)..."
+
+    # 2. Metodo: Cambiar Listen Port
+    # Esto obliga a MikroTik a liberar el socket UDP y volver a enlazarlo
+    
+    :do {
+        :log info "[\\$clientID Watchdog] Cambiando puerto a \\$togglePort..."
+        /interface wireguard set [find name=\\$wgInterface] listen-port=\\$togglePort
+        
+        :delay 1s
+        
+        :log info "[\\$clientID Watchdog] Restaurando puerto a \\$originalPort..."
+        /interface wireguard set [find name=\\$wgInterface] listen-port=\\$originalPort
+        
+        :log warning "[\\$clientID Watchdog] Socket UDP reiniciado. Esperando handshake..."
+    } on-error={ 
+        :log error "[\\$clientID Watchdog] ERROR CRITICO al intentar cambiar puertos" 
+    }
+
+} 
+# Si el ping funciona, no hacemos nada (silencioso)
+}
+
+# Script Critico: Reinicio del Sistema (Failsafe 3h)
+/system script add name=watchdog-system-reboot policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source={
+:local serverIP "100.100.100.1"
+:local clientID "${clientID}"
+
+:if ([/ping \\$serverIP count=10 interval=1s] = 0) do={
+    :log error "[\\$clientID Critical] FALLA TOTAL DE CONECTIVIDAD - Reiniciando Router..."
+    :delay 5s
+    /system reboot
+}
+}
+
+# ================================================================
+# VERIFICAR Y CONFIGURAR DEVICE-MODE
+# ================================================================
+
+:local currentMode [/system device-mode get mode]
+:if (\\$currentMode != "disabled") do={
+    :put "ADVERTENCIA: Device-mode debe ser 'disabled'. Ejecute: /system device-mode update mode=disabled"
+    :error "Modo restrictivo detectado"
+}
+
+# ================================================================
+# CREAR TAREAS PROGRAMADAS
+# ================================================================
+
+# Limpiar tareas antiguas
+:do { /system scheduler remove [find name=watchdog-down-scheduler] } on-error={}
+:do { /system scheduler remove [find name=watchdog-up-scheduler] } on-error={}
+:do { /system scheduler remove [find name=watchdog-monitor-scheduler] } on-error={}
+
+:put "Creando tareas de monitoreo..."
+
+# Tarea Principal: Corre cada 2 minutos
+:do {
+    /system scheduler add name=watchdog-socket-scheduler interval=2m on-event=watchdog-wg-socket-reset start-time=startup comment="Monitor WG - Port Toggle cada 2 min"
+    :put "  [OK] Monitor Socket Reset creado (2 min)"
+} on-error={ :put "  [ERROR] Fallo al crear monitor scheduler" }
+
+# Tarea Critica: Corre cada 3 horas
+:do {
+    /system scheduler add name=watchdog-system-critical interval=3h on-event=watchdog-system-reboot start-time=startup comment="Reinicio critico si falla todo"
+    :put "  [OK] Watchdog Critico creado (3 horas)"
+} on-error={ :put "  [ERROR] Fallo al crear critical scheduler" }
+
+:put ""
+:put "WATCHDOG NO INTRUSIVO CONFIGURADO"`;
+  };
+
+  const generateServerCommands = () => {
+    return `# ================================================================
+# COMANDOS PARA EL SERVIDOR WIREGUARD
+# Cliente: ${clientID}
+# IP: 100.100.100.${clientIPSuffix}
+# Llave Publica: ${clientPubKey}
+# ================================================================
+
+# Agregar Peer
+/interface wireguard peers add interface=wireguard-server name=${clientID} comment="${clientID} / IP 30" public-key="${clientPubKey}" allowed-address=100.100.100.${clientIPSuffix}/32,${lanNetwork}.0/24
+
+# Agregar Ruta
+/ip route add dst-address=${lanNetwork}.0/24 gateway=100.100.100.${clientIPSuffix} comment="Ruta ${clientID}"`;
+  };
+
+  const generateCameraURLs = () => {
+    if (!setupDNAT && configMode === "complete") return "";
+    if (cameraIPs.filter(ip => ip.trim()).length === 0) return "";
+
+    const portBase = 8000 + (parseInt(clientIPSuffix) * 10);
+    let urls = "";
+
+    cameraIPs.forEach((ip, i) => {
+      if (!ip.trim()) return;
+      const cameraNum = i + 1;
+      const httpPort = portBase + cameraNum;
+      const rtspPort = portBase + cameraNum + 50;
+      
+      urls += `📹 Cámara ${cameraNum} (${ip})\n`;
+      urls += `HTTP: http://100.100.100.${clientIPSuffix}:${httpPort}\n`;
+      urls += `RTSP Puerto: ${rtspPort}\n`;
+      urls += `RTSP Main: rtsp://100.100.100.${clientIPSuffix}:${rtspPort}/cam/realmonitor?channel=1&subtype=0\n`;
+      urls += `RTSP Sub:  rtsp://100.100.100.${clientIPSuffix}:${rtspPort}/cam/realmonitor?channel=1&subtype=1\n\n`;
+    });
+
+    return urls.trim();
+  };
+
   const handleGenerate = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -225,8 +359,6 @@ const ConfigGenerator = () => {
         });
         return;
       }
-      const config = generateBaseConfig() + generateWireGuardConfig() + generateDNATConfig();
-      setGeneratedConfig(config);
     } else if (configMode === "wireguard") {
       if (!clientID || !clientIPSuffix || !clientPubKey) {
         toast({
@@ -244,8 +376,6 @@ const ConfigGenerator = () => {
         });
         return;
       }
-      const config = generateWireGuardConfig();
-      setGeneratedConfig(config);
     } else if (configMode === "dnat") {
       if (!clientID || !clientIPSuffix) {
         toast({
@@ -255,31 +385,66 @@ const ConfigGenerator = () => {
         });
         return;
       }
-      const config = generateDNATConfig();
-      setGeneratedConfig(config);
     }
+
+    // Generar secciones
+    const portBase = 8000 + (parseInt(clientIPSuffix) * 10);
+    const numCamerasText = setupDNAT || configMode === "dnat" 
+      ? `${cameraIPs.filter(ip => ip.trim()).length} (${cameraType})`
+      : "0";
+
+    setConfigSections({
+      summary: {
+        clientID,
+        wgIP: `100.100.100.${clientIPSuffix}`,
+        interface: `WIREGUARD-${clientID}`,
+        lanNetwork: `${lanNetwork}.0/24`,
+        routerIP: `${lanNetwork}.1`,
+        dhcpPool: `${lanNetwork}.${dhcpStart} - ${lanNetwork}.${dhcpEnd}`,
+        dns: dnsServers.includes("8.8.8.8") ? "Google" : dnsServers.includes("1.1.1.1") ? "Cloudflare" : "OpenDNS",
+        cameras: numCamerasText,
+        portBase: portBase.toString(),
+        watchdog: "Socket Reset",
+      },
+      base: generateBaseConfig(),
+      wireguard: generateWireGuardConfig(),
+      dnat: generateDNATConfig(),
+      watchdog: generateWatchdogConfig(),
+      serverCommands: generateServerCommands(),
+      cameraURLs: generateCameraURLs(),
+    });
 
     setShowResults(true);
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(generatedConfig);
+  const copyToClipboard = (text: string, section: string) => {
+    navigator.clipboard.writeText(text);
     toast({
       title: "Copiado",
-      description: "Configuración copiada al portapapeles",
+      description: `${section} copiado al portapapeles`,
     });
   };
 
-  const downloadConfig = () => {
-    const blob = new Blob([generatedConfig], { type: "text/plain" });
+  const downloadSection = (text: string, filename: string) => {
+    const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `config-${clientID}.rsc`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const downloadFullConfig = () => {
+    if (!configSections) return;
+    
+    let fullConfig = `${configSections.base}\n${configSections.wireguard}\n`;
+    if (configSections.dnat) fullConfig += `${configSections.dnat}\n`;
+    fullConfig += `\n${configSections.watchdog}\n\n${configSections.serverCommands}`;
+    
+    downloadSection(fullConfig, `config-${clientID}.rsc`);
   };
 
   return (
@@ -634,28 +799,200 @@ const ConfigGenerator = () => {
           </TabsContent>
         </Tabs>
 
-        {showResults && (
-          <div className="mt-6 space-y-4">
-            <div className="flex gap-2">
-              <Button onClick={copyToClipboard} variant="outline" className="gap-2">
-                <Copy className="h-4 w-4" />
-                Copiar
-              </Button>
-              <Button onClick={downloadConfig} variant="outline" className="gap-2">
-                <Download className="h-4 w-4" />
-                Descargar .rsc
+        {showResults && configSections && (
+          <div className="mt-8 space-y-6">
+            {/* Resumen de Configuración */}
+            <Card className="border-primary/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <FileText className="h-5 w-5" />
+                  Resumen de Configuración
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cliente:</span>
+                    <span className="font-semibold text-primary">{configSections.summary.clientID}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">IP WireGuard:</span>
+                    <span className="font-mono">{configSections.summary.wgIP}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Interfaz:</span>
+                    <span className="font-mono">{configSections.summary.interface}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Red LAN:</span>
+                    <span className="font-mono">{configSections.summary.lanNetwork}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">IP Router:</span>
+                    <span className="font-mono">{configSections.summary.routerIP}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Pool DHCP:</span>
+                    <span className="font-mono text-xs">{configSections.summary.dhcpPool}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">DNS:</span>
+                    <span>{configSections.summary.dns}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cámaras:</span>
+                    <span>{configSections.summary.cameras}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Base Puertos:</span>
+                    <span className="font-mono">{configSections.summary.portBase}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Watchdog:</span>
+                    <span className="flex items-center gap-1">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      {configSections.summary.watchdog}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Sección 1: Configuración Base */}
+            {configSections.base && (
+              <ConfigSection
+                number={1}
+                title="Configuración Base (Pasos 1-6)"
+                content={configSections.base}
+                onCopy={() => copyToClipboard(configSections.base, "Configuración Base")}
+                onDownload={() => downloadSection(configSections.base, `${clientID}-01-base.rsc`)}
+              />
+            )}
+
+            {/* Sección 2: Configuración WireGuard */}
+            {configSections.wireguard && (
+              <ConfigSection
+                number={2}
+                title="Configuración WireGuard"
+                content={configSections.wireguard}
+                onCopy={() => copyToClipboard(configSections.wireguard, "Configuración WireGuard")}
+                onDownload={() => downloadSection(configSections.wireguard, `${clientID}-02-wireguard.rsc`)}
+              />
+            )}
+
+            {/* Sección 3: Configuración DNAT */}
+            {configSections.dnat && (
+              <ConfigSection
+                number={3}
+                title="Configuración DNAT para Cámaras"
+                content={configSections.dnat}
+                onCopy={() => copyToClipboard(configSections.dnat, "Configuración DNAT")}
+                onDownload={() => downloadSection(configSections.dnat, `${clientID}-03-dnat.rsc`)}
+              />
+            )}
+
+            {/* Sección 4: Scripts Watchdog */}
+            <ConfigSection
+              number={4}
+              title="Scripts Watchdog Automático"
+              content={configSections.watchdog}
+              onCopy={() => copyToClipboard(configSections.watchdog, "Scripts Watchdog")}
+              onDownload={() => downloadSection(configSections.watchdog, `${clientID}-04-watchdog.rsc`)}
+            />
+
+            {/* Sección 5: Comandos para Servidor */}
+            <ConfigSection
+              number={5}
+              title="Comandos para Servidor WireGuard"
+              content={configSections.serverCommands}
+              onCopy={() => copyToClipboard(configSections.serverCommands, "Comandos del Servidor")}
+              onDownload={() => downloadSection(configSections.serverCommands, `${clientID}-05-server.rsc`)}
+            />
+
+            {/* Sección 6: URLs de Cámaras */}
+            {configSections.cameraURLs && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">6</span>
+                      URLs de Acceso a Cámaras
+                    </CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto whitespace-pre-wrap">
+                    {configSections.cameraURLs}
+                  </pre>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Botón de descarga completa */}
+            <div className="flex justify-center pt-4">
+              <Button onClick={downloadFullConfig} size="lg" className="gap-2">
+                <Download className="h-5 w-5" />
+                Descargar Configuración Completa (.rsc)
               </Button>
             </div>
-            <Textarea
-              value={generatedConfig}
-              readOnly
-              className="font-mono text-sm h-96"
-            />
           </div>
         )}
       </CardContent>
     </Card>
   );
 };
+
+// Componente auxiliar para secciones de configuración
+const ConfigSection = ({ 
+  number, 
+  title, 
+  content, 
+  onCopy, 
+  onDownload 
+}: { 
+  number: number; 
+  title: string; 
+  content: string; 
+  onCopy: () => void; 
+  onDownload: () => void; 
+}) => (
+  <Card>
+    <CardHeader className="pb-3">
+      <div className="flex items-center justify-between">
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
+            {number}
+          </span>
+          {title}
+        </CardTitle>
+        <div className="flex gap-2">
+          <Button onClick={onCopy} variant="default" size="sm" className="gap-2">
+            <Copy className="h-4 w-4" />
+            Copiar
+          </Button>
+          <Button onClick={onDownload} variant="outline" size="sm" className="gap-2">
+            <Download className="h-4 w-4" />
+            Descargar
+          </Button>
+        </div>
+      </div>
+    </CardHeader>
+    <CardContent>
+      <div className="relative">
+        <Button
+          onClick={onCopy}
+          variant="ghost"
+          size="sm"
+          className="absolute right-2 top-2 z-10"
+        >
+          <Copy className="h-4 w-4" />
+        </Button>
+        <pre className="bg-slate-950 text-slate-100 p-4 rounded-lg text-xs overflow-x-auto max-h-96 overflow-y-auto">
+          {content}
+        </pre>
+      </div>
+    </CardContent>
+  </Card>
+);
 
 export default ConfigGenerator;
