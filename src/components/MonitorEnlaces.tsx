@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface WireGuardPeer {
@@ -50,6 +50,8 @@ const MonitorEnlaces = () => {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [stats, setStats] = useState({
     total: 0,
     active: 0,
@@ -241,6 +243,24 @@ const MonitorEnlaces = () => {
     setStats(stats);
   };
 
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
+  const getSortIcon = (column: string) => {
+    if (sortColumn !== column) {
+      return <ArrowUpDown className="h-4 w-4 ml-1 inline opacity-50" />;
+    }
+    return sortDirection === "asc" ? 
+      <ArrowUp className="h-4 w-4 ml-1 inline" /> : 
+      <ArrowDown className="h-4 w-4 ml-1 inline" />;
+  };
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: any; label: string }> = {
       'active': { variant: 'default', label: '✅ Activo' },
@@ -272,8 +292,48 @@ const MonitorEnlaces = () => {
       filtered = filtered.filter(peer => peer.status === filterStatus);
     }
 
+    // Aplicar ordenamiento
+    if (sortColumn) {
+      filtered = [...filtered].sort((a, b) => {
+        let aValue: any;
+        let bValue: any;
+
+        switch (sortColumn) {
+          case 'name':
+            aValue = a.name;
+            bValue = b.name;
+            break;
+          case 'wgIP':
+            // Extraer número de IP para ordenar correctamente
+            const aMatch = a.wgIP.match(/100\.100\.100\.(\d+)/);
+            const bMatch = b.wgIP.match(/100\.100\.100\.(\d+)/);
+            aValue = aMatch ? parseInt(aMatch[1]) : 0;
+            bValue = bMatch ? parseInt(bMatch[1]) : 0;
+            break;
+          case 'lans':
+            aValue = a.lans.join(',');
+            bValue = b.lans.join(',');
+            break;
+          case 'status':
+            aValue = a.status;
+            bValue = b.status;
+            break;
+          case 'lastHandshake':
+            aValue = a.lastHandshake;
+            bValue = b.lastHandshake;
+            break;
+          default:
+            return 0;
+        }
+
+        if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
     setFilteredPeers(filtered);
-  }, [searchTerm, filterStatus, peers]);
+  }, [searchTerm, filterStatus, peers, sortColumn, sortDirection]);
 
   return (
     <div className="space-y-6">
@@ -387,11 +447,36 @@ const MonitorEnlaces = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>IP WireGuard</TableHead>
-                  <TableHead>LANs</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Último Handshake</TableHead>
+                  <TableHead 
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => handleSort('name')}
+                  >
+                    ID{getSortIcon('name')}
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => handleSort('wgIP')}
+                  >
+                    IP WireGuard{getSortIcon('wgIP')}
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => handleSort('lans')}
+                  >
+                    LANs{getSortIcon('lans')}
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => handleSort('status')}
+                  >
+                    Estado{getSortIcon('status')}
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => handleSort('lastHandshake')}
+                  >
+                    Último Handshake{getSortIcon('lastHandshake')}
+                  </TableHead>
                   <TableHead>Comentario</TableHead>
                 </TableRow>
               </TableHeader>
