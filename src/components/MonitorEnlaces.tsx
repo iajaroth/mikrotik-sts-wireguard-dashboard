@@ -224,7 +224,7 @@ const MonitorEnlaces = () => {
       inactive: peersList.filter(p => p.status === 'inactive').length,
       reserved: peersList.filter(p => p.status === 'reserved-ddns').length,
       static: peersList.filter(p => p.status === 'static-override').length,
-      available: 200 - peersList.length,
+      available: peersList.filter(p => p.status === 'available').length,
     };
     setStats(stats);
   };
