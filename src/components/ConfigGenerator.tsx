@@ -33,6 +33,18 @@ const ConfigGenerator = () => {
   const [suggestedLAN, setSuggestedLAN] = useState<string>("");
   const [suggestedMC, setSuggestedMC] = useState<number | null>(null);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
+
+  // MCs y LANs estáticas reservadas (deben coincidir con MonitorEnlaces)
+  const STATIC_OVERRIDES = [
+    { mcNumber: 5, lan: '172.16.100.26' },
+    { mcNumber: 8, lan: '190.2.221.40:10554' },
+    { mcNumber: 19, lan: '192.168.13.0/24' },
+    { mcNumber: 21, lan: '201.193.161.165' },
+    { mcNumber: 22, lan: '192.168.11.0/24' },
+    { mcNumber: 31, lan: '177.93.6.24' },
+    { mcNumber: 38, lan: '201.192.162.70:5554' },
+    { mcNumber: 63, lan: '177.93.31.175' },
+  ];
   type ConfigSection = {
     id: string;
     number: number;
@@ -117,12 +129,30 @@ const ConfigGenerator = () => {
 
         console.log('LANs ocupadas detectadas:', Array.from(usedLANs).sort());
 
+        // Agregar LANs de STATIC_OVERRIDES
+        STATIC_OVERRIDES.forEach(({ lan }) => {
+          // Normalizar el formato de LAN estática
+          if (lan.includes('192.168.') && !lan.includes(':')) {
+            // Si es una red privada sin puerto, normalizar a formato /24
+            if (!lan.includes('/24')) {
+              const match = lan.match(/192\.168\.(\d+)\./);
+              if (match) {
+                usedLANs.add(`192.168.${match[1]}.0/24`);
+              }
+            } else {
+              usedLANs.add(lan);
+            }
+          }
+        });
+
+        console.log('LANs ocupadas (incluyendo estáticas):', Array.from(usedLANs).sort());
+
         // MCs estáticos y DDNS reservados
         const DDNS_RESERVED_MCS = [2, 7, 14, 20, 26, 46, 62, 66, 70];
-        const STATIC_OVERRIDES = [5, 8, 19, 21, 22, 31, 38, 63];
+        const STATIC_OVERRIDE_MCS = STATIC_OVERRIDES.map(s => s.mcNumber);
         
         DDNS_RESERVED_MCS.forEach(mc => usedMCs.add(mc));
-        STATIC_OVERRIDES.forEach(mc => usedMCs.add(mc));
+        STATIC_OVERRIDE_MCS.forEach(mc => usedMCs.add(mc));
 
         // Encontrar siguiente MC disponible (1-200)
         const nextMC = Array.from({ length: 200 }, (_, idx) => idx + 1)
