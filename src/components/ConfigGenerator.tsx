@@ -33,15 +33,27 @@ const ConfigGenerator = () => {
   const [suggestedLAN, setSuggestedLAN] = useState<string>("");
   const [suggestedMC, setSuggestedMC] = useState<number | null>(null);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
-  const [configSections, setConfigSections] = useState<{
-    summary: { clientID: string; wgIP: string; interface: string; lanNetwork: string; routerIP: string; dhcpPool: string; dns: string; cameras: string; portBase: string; watchdog: string; };
-    base: string;
-    wireguard: string;
-    dnat: string;
+  type ConfigSection = {
+    id: string;
+    number: number;
+    title: string;
+    content: string;
+  };
+
+  const [summaryData, setSummaryData] = useState<{
+    clientID: string;
+    wgIP: string;
+    interface: string;
+    lanNetwork: string;
+    routerIP: string;
+    dhcpPool: string;
+    dns: string;
+    cameras: string;
+    portBase: string;
     watchdog: string;
-    serverCommands: string;
-    cameraURLs: string;
   } | null>(null);
+  
+  const [configSections, setConfigSections] = useState<ConfigSection[]>([]);
 
   useEffect(() => {
     const newCameraIPs = Array(numCameras).fill("").map((_, i) => cameraIPs[i] || "");
@@ -387,33 +399,123 @@ const ConfigGenerator = () => {
       }
     }
 
-    // Generar secciones
+    // Generar secciones según el modo
     const portBase = 8000 + (parseInt(clientIPSuffix) * 10);
     const numCamerasText = setupDNAT || configMode === "dnat" 
       ? `${cameraIPs.filter(ip => ip.trim()).length} (${cameraType})`
       : "0";
 
-    setConfigSections({
-      summary: {
-        clientID,
-        wgIP: `100.100.100.${clientIPSuffix}`,
-        interface: `WIREGUARD-${clientID}`,
-        lanNetwork: `${lanNetwork}.0/24`,
-        routerIP: `${lanNetwork}.1`,
-        dhcpPool: `${lanNetwork}.${dhcpStart} - ${lanNetwork}.${dhcpEnd}`,
-        dns: dnsServers.includes("8.8.8.8") ? "Google" : dnsServers.includes("1.1.1.1") ? "Cloudflare" : "OpenDNS",
-        cameras: numCamerasText,
-        portBase: portBase.toString(),
-        watchdog: "Socket Reset",
-      },
-      base: generateBaseConfig(),
-      wireguard: generateWireGuardConfig(),
-      dnat: generateDNATConfig(),
-      watchdog: generateWatchdogConfig(),
-      serverCommands: generateServerCommands(),
-      cameraURLs: generateCameraURLs(),
+    // Summary data (siempre se muestra)
+    setSummaryData({
+      clientID,
+      wgIP: `100.100.100.${clientIPSuffix}`,
+      interface: `WIREGUARD-${clientID}`,
+      lanNetwork: lanNetwork ? `${lanNetwork}.0/24` : "N/A",
+      routerIP: lanNetwork ? `${lanNetwork}.1` : "N/A",
+      dhcpPool: lanNetwork ? `${lanNetwork}.${dhcpStart} - ${lanNetwork}.${dhcpEnd}` : "N/A",
+      dns: dnsServers.includes("8.8.8.8") ? "Google" : dnsServers.includes("1.1.1.1") ? "Cloudflare" : "OpenDNS",
+      cameras: numCamerasText,
+      portBase: portBase.toString(),
+      watchdog: "Socket Reset",
     });
 
+    // Generar solo las secciones relevantes según el modo
+    const sections: ConfigSection[] = [];
+    let sectionNumber = 1;
+
+    if (configMode === "complete") {
+      // Configuración completa: todas las secciones
+      sections.push({
+        id: "base",
+        number: sectionNumber++,
+        title: "Configuración Base (Pasos 1-6)",
+        content: generateBaseConfig(),
+      });
+      sections.push({
+        id: "wireguard",
+        number: sectionNumber++,
+        title: "Configuración WireGuard",
+        content: generateWireGuardConfig(),
+      });
+      if (setupDNAT) {
+        sections.push({
+          id: "dnat",
+          number: sectionNumber++,
+          title: "Configuración DNAT para Cámaras",
+          content: generateDNATConfig(),
+        });
+      }
+      sections.push({
+        id: "watchdog",
+        number: sectionNumber++,
+        title: "Scripts Watchdog Automático",
+        content: generateWatchdogConfig(),
+      });
+      sections.push({
+        id: "server",
+        number: sectionNumber++,
+        title: "Comandos para Servidor WireGuard",
+        content: generateServerCommands(),
+      });
+      if (setupDNAT) {
+        sections.push({
+          id: "urls",
+          number: sectionNumber++,
+          title: "URLs de Acceso a Cámaras",
+          content: generateCameraURLs(),
+        });
+      }
+    } else if (configMode === "wireguard") {
+      // Solo WireGuard
+      if (includeLAN && lanNetwork) {
+        sections.push({
+          id: "base",
+          number: sectionNumber++,
+          title: "Configuración Base (Pasos 1-6)",
+          content: generateBaseConfig(),
+        });
+      }
+      sections.push({
+        id: "wireguard",
+        number: sectionNumber++,
+        title: "Configuración WireGuard",
+        content: generateWireGuardConfig(),
+      });
+      sections.push({
+        id: "watchdog",
+        number: sectionNumber++,
+        title: "Scripts Watchdog Automático",
+        content: generateWatchdogConfig(),
+      });
+      sections.push({
+        id: "server",
+        number: sectionNumber++,
+        title: "Comandos para Servidor WireGuard",
+        content: generateServerCommands(),
+      });
+    } else if (configMode === "dnat") {
+      // Solo DNAT
+      const dnatContent = generateDNATConfig();
+      if (dnatContent) {
+        sections.push({
+          id: "dnat",
+          number: sectionNumber++,
+          title: "Configuración DNAT para Cámaras",
+          content: dnatContent,
+        });
+      }
+      const urlsContent = generateCameraURLs();
+      if (urlsContent) {
+        sections.push({
+          id: "urls",
+          number: sectionNumber++,
+          title: "URLs de Acceso a Cámaras",
+          content: urlsContent,
+        });
+      }
+    }
+
+    setConfigSections(sections);
     setShowResults(true);
   };
 
@@ -438,11 +540,12 @@ const ConfigGenerator = () => {
   };
 
   const downloadFullConfig = () => {
-    if (!configSections) return;
+    if (configSections.length === 0) return;
     
-    let fullConfig = `${configSections.base}\n${configSections.wireguard}\n`;
-    if (configSections.dnat) fullConfig += `${configSections.dnat}\n`;
-    fullConfig += `\n${configSections.watchdog}\n\n${configSections.serverCommands}`;
+    const fullConfig = configSections
+      .filter(section => section.id !== "urls") // Excluir URLs del archivo .rsc
+      .map(section => section.content)
+      .join("\n\n");
     
     downloadSection(fullConfig, `config-${clientID}.rsc`);
   };
@@ -799,7 +902,7 @@ const ConfigGenerator = () => {
           </TabsContent>
         </Tabs>
 
-        {showResults && configSections && (
+        {showResults && summaryData && configSections.length > 0 && (
           <div className="mt-8 space-y-6">
             {/* Resumen de Configuración */}
             <Card className="border-primary/20">
@@ -813,128 +916,97 @@ const ConfigGenerator = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Cliente:</span>
-                    <span className="font-semibold text-primary">{configSections.summary.clientID}</span>
+                    <span className="font-semibold text-primary">{summaryData.clientID}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">IP WireGuard:</span>
-                    <span className="font-mono">{configSections.summary.wgIP}</span>
+                    <span className="font-mono">{summaryData.wgIP}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Interfaz:</span>
-                    <span className="font-mono">{configSections.summary.interface}</span>
+                    <span className="font-mono">{summaryData.interface}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Red LAN:</span>
-                    <span className="font-mono">{configSections.summary.lanNetwork}</span>
+                    <span className="font-mono">{summaryData.lanNetwork}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">IP Router:</span>
-                    <span className="font-mono">{configSections.summary.routerIP}</span>
+                    <span className="font-mono">{summaryData.routerIP}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Pool DHCP:</span>
-                    <span className="font-mono text-xs">{configSections.summary.dhcpPool}</span>
+                    <span className="font-mono text-xs">{summaryData.dhcpPool}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">DNS:</span>
-                    <span>{configSections.summary.dns}</span>
+                    <span>{summaryData.dns}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Cámaras:</span>
-                    <span>{configSections.summary.cameras}</span>
+                    <span>{summaryData.cameras}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Base Puertos:</span>
-                    <span className="font-mono">{configSections.summary.portBase}</span>
+                    <span className="font-mono">{summaryData.portBase}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Watchdog:</span>
                     <span className="flex items-center gap-1">
                       <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                      {configSections.summary.watchdog}
+                      {summaryData.watchdog}
                     </span>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            {/* Sección 1: Configuración Base */}
-            {configSections.base && (
-              <ConfigSection
-                number={1}
-                title="Configuración Base (Pasos 1-6)"
-                content={configSections.base}
-                onCopy={() => copyToClipboard(configSections.base, "Configuración Base")}
-                onDownload={() => downloadSection(configSections.base, `${clientID}-01-base.rsc`)}
-              />
-            )}
-
-            {/* Sección 2: Configuración WireGuard */}
-            {configSections.wireguard && (
-              <ConfigSection
-                number={2}
-                title="Configuración WireGuard"
-                content={configSections.wireguard}
-                onCopy={() => copyToClipboard(configSections.wireguard, "Configuración WireGuard")}
-                onDownload={() => downloadSection(configSections.wireguard, `${clientID}-02-wireguard.rsc`)}
-              />
-            )}
-
-            {/* Sección 3: Configuración DNAT */}
-            {configSections.dnat && (
-              <ConfigSection
-                number={3}
-                title="Configuración DNAT para Cámaras"
-                content={configSections.dnat}
-                onCopy={() => copyToClipboard(configSections.dnat, "Configuración DNAT")}
-                onDownload={() => downloadSection(configSections.dnat, `${clientID}-03-dnat.rsc`)}
-              />
-            )}
-
-            {/* Sección 4: Scripts Watchdog */}
-            <ConfigSection
-              number={4}
-              title="Scripts Watchdog Automático"
-              content={configSections.watchdog}
-              onCopy={() => copyToClipboard(configSections.watchdog, "Scripts Watchdog")}
-              onDownload={() => downloadSection(configSections.watchdog, `${clientID}-04-watchdog.rsc`)}
-            />
-
-            {/* Sección 5: Comandos para Servidor */}
-            <ConfigSection
-              number={5}
-              title="Comandos para Servidor WireGuard"
-              content={configSections.serverCommands}
-              onCopy={() => copyToClipboard(configSections.serverCommands, "Comandos del Servidor")}
-              onDownload={() => downloadSection(configSections.serverCommands, `${clientID}-05-server.rsc`)}
-            />
-
-            {/* Sección 6: URLs de Cámaras */}
-            {configSections.cameraURLs && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">6</span>
-                      URLs de Acceso a Cámaras
-                    </CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto whitespace-pre-wrap">
-                    {configSections.cameraURLs}
-                  </pre>
-                </CardContent>
-              </Card>
-            )}
+            {/* Renderizar secciones dinámicamente */}
+            {configSections.map((section) => {
+              if (section.id === "urls") {
+                // Renderizado especial para URLs de cámaras
+                return (
+                  <Card key={section.id}>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="flex items-center gap-2 text-lg">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
+                            {section.number}
+                          </span>
+                          {section.title}
+                        </CardTitle>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto whitespace-pre-wrap">
+                        {section.content}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                );
+              }
+              
+              return (
+                <ConfigSectionComponent
+                  key={section.id}
+                  number={section.number}
+                  title={section.title}
+                  content={section.content}
+                  onCopy={() => copyToClipboard(section.content, section.title)}
+                  onDownload={() => downloadSection(section.content, `${clientID}-${String(section.number).padStart(2, '0')}-${section.id}.rsc`)}
+                />
+              );
+            })}
 
             {/* Botón de descarga completa */}
-            <div className="flex justify-center pt-4">
-              <Button onClick={downloadFullConfig} size="lg" className="gap-2">
-                <Download className="h-5 w-5" />
-                Descargar Configuración Completa (.rsc)
-              </Button>
-            </div>
+            {configSections.length > 0 && (
+              <div className="flex justify-center pt-4">
+                <Button onClick={downloadFullConfig} size="lg" className="gap-2">
+                  <Download className="h-5 w-5" />
+                  Descargar Configuración Completa (.rsc)
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </CardContent>
@@ -943,7 +1015,7 @@ const ConfigGenerator = () => {
 };
 
 // Componente auxiliar para secciones de configuración
-const ConfigSection = ({ 
+const ConfigSectionComponent = ({ 
   number, 
   title, 
   content, 
