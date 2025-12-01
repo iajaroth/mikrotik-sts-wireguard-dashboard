@@ -8,7 +8,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Copy, Download } from "lucide-react";
+import { Copy, Download, Lightbulb } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const ConfigGenerator = () => {
   const { toast } = useToast();
@@ -25,11 +27,74 @@ const ConfigGenerator = () => {
   const [cameraIPs, setCameraIPs] = useState<string[]>([""]);
   const [generatedConfig, setGeneratedConfig] = useState("");
   const [showResults, setShowResults] = useState(false);
+  const [suggestedIP, setSuggestedIP] = useState<number | null>(null);
+  const [suggestedLAN, setSuggestedLAN] = useState<string>("");
+  const [loadingSuggestion, setLoadingSuggestion] = useState(false);
 
   useEffect(() => {
     const newCameraIPs = Array(numCameras).fill("").map((_, i) => cameraIPs[i] || "");
     setCameraIPs(newCameraIPs);
   }, [numCameras]);
+
+  useEffect(() => {
+    fetchSuggestion();
+  }, []);
+
+  const fetchSuggestion = async () => {
+    setLoadingSuggestion(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('mikrotik-fetch');
+      
+      if (error) throw error;
+      
+      if (data.success) {
+        const usedWGIPs = new Set<number>();
+        const usedLANs = new Set<string>();
+        
+        data.data.forEach((peer: any) => {
+          const wgIPMatch = peer["allowed-address"].match(/100\.100\.100\.(\d+)/);
+          if (wgIPMatch) {
+            usedWGIPs.add(parseInt(wgIPMatch[1]));
+          }
+          
+          const lans = peer["allowed-address"]
+            .split(',')
+            .filter((addr: string) => !addr.includes('100.100.100') && !addr.includes('172.16.100'))
+            .map((addr: string) => addr.trim());
+          
+          lans.forEach((lan: string) => usedLANs.add(lan));
+        });
+
+        // Encontrar siguiente IP WireGuard disponible
+        const nextWGIP = Array.from({ length: 252 }, (_, idx) => idx + 2)
+          .find(suffix => !usedWGIPs.has(suffix)) || 2;
+        
+        // Encontrar siguiente LAN disponible
+        const nextLAN = Array.from({ length: 200 }, (_, idx) => `192.168.${idx + 10}`)
+          .find(lan => !usedLANs.has(`${lan}.0/24`)) || "192.168.10";
+
+        setSuggestedIP(nextWGIP);
+        setSuggestedLAN(nextLAN);
+      }
+    } catch (error) {
+      console.error('Error fetching suggestion:', error);
+    } finally {
+      setLoadingSuggestion(false);
+    }
+  };
+
+  const applySuggestion = () => {
+    if (suggestedIP) {
+      setClientIPSuffix(suggestedIP.toString());
+    }
+    if (suggestedLAN) {
+      setLanNetwork(suggestedLAN);
+    }
+    toast({
+      title: "Sugerencia aplicada",
+      description: "Se han completado los campos con los valores sugeridos",
+    });
+  };
 
   const generateBaseConfig = () => {
     return `# ================================================================
@@ -159,6 +224,20 @@ const ConfigGenerator = () => {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleGenerate} className="space-y-6">
+          {suggestedIP && suggestedLAN && !loadingSuggestion && (
+            <Alert className="bg-primary/5 border-primary/20">
+              <Lightbulb className="h-4 w-4" />
+              <AlertDescription className="flex items-center justify-between">
+                <span>
+                  Siguiente disponible: <strong>IP 100.100.100.{suggestedIP}</strong> y <strong>LAN {suggestedLAN}.0/24</strong>
+                </span>
+                <Button type="button" size="sm" onClick={applySuggestion}>
+                  Usar Sugerencia
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="clientID">ID del Cliente *</Label>

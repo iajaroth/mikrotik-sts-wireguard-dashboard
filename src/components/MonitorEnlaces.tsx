@@ -91,15 +91,26 @@ const MonitorEnlaces = () => {
   };
 
   const processPeers = (rawPeers: WireGuardPeer[]): ProcessedPeer[] => {
-    return rawPeers.map((peer) => {
+    const processedPeers: ProcessedPeer[] = [];
+    const usedMCs = new Set<number>();
+    const usedWGIPs = new Set<number>();
+    const usedLANs = new Set<string>();
+
+    // Procesar peers existentes
+    rawPeers.forEach((peer) => {
       const name = peer.name || peer.comment || "Sin nombre";
-      const wgIPMatch = peer["allowed-address"].match(/(\d+\.\d+\.\d+\.\d+)/);
-      const wgIP = wgIPMatch ? wgIPMatch[1] : "N/A";
+      const wgIPMatch = peer["allowed-address"].match(/100\.100\.100\.(\d+)/);
+      const wgIPSuffix = wgIPMatch ? parseInt(wgIPMatch[1]) : null;
+      const wgIP = wgIPSuffix ? `100.100.100.${wgIPSuffix}` : "N/A";
+      
+      if (wgIPSuffix) usedWGIPs.add(wgIPSuffix);
       
       const lans = peer["allowed-address"]
         .split(',')
         .filter(addr => !addr.includes('100.100.100') && !addr.includes('172.16.100'))
         .map(addr => addr.trim());
+
+      lans.forEach(lan => usedLANs.add(lan));
 
       const isActive = peer["last-handshake"] && 
                       !peer["last-handshake"].includes('h') && 
@@ -108,9 +119,11 @@ const MonitorEnlaces = () => {
 
       let status = isActive ? 'active' : 'inactive';
       
-      const mcMatch = name.match(/MC(\d+)/i);
+      const mcMatch = name.match(/^(?:WIREGUARD-)?MC(\d+)(?:[_-]|$)/i);
       if (mcMatch) {
         const mcNum = parseInt(mcMatch[1]);
+        usedMCs.add(mcNum);
+        
         if (DDNS_RESERVED_MCS.includes(mcNum)) {
           status = 'reserved-ddns';
         }
@@ -119,7 +132,7 @@ const MonitorEnlaces = () => {
         }
       }
 
-      return {
+      processedPeers.push({
         id: peer[".id"],
         name,
         wgIP,
@@ -128,7 +141,79 @@ const MonitorEnlaces = () => {
         lastHandshake: peer["last-handshake"] || "never",
         comment: peer.comment || "",
         endpointAddress: peer["current-endpoint-address"] || "N/A",
-      };
+      });
+    });
+
+    // Agregar estáticos que no están en peers
+    STATIC_OVERRIDES.forEach(({ mcNumber, lan }) => {
+      if (!usedMCs.has(mcNumber)) {
+        usedMCs.add(mcNumber);
+        usedLANs.add(lan);
+        processedPeers.push({
+          id: `static-${mcNumber}`,
+          name: `MC${String(mcNumber).padStart(2, '0')}`,
+          wgIP: "N/A",
+          lans: [lan],
+          status: 'static-override',
+          lastHandshake: "N/A",
+          comment: `Manual: ${lan}`,
+          endpointAddress: "N/A",
+        });
+      }
+    });
+
+    // Agregar reservados DDNS que no están en peers
+    DDNS_RESERVED_MCS.forEach(mcNum => {
+      if (!usedMCs.has(mcNum)) {
+        usedMCs.add(mcNum);
+        processedPeers.push({
+          id: `ddns-${mcNum}`,
+          name: `MC${String(mcNum).padStart(2, '0')}`,
+          wgIP: "Reserved for DDNS",
+          lans: [],
+          status: 'reserved-ddns',
+          lastHandshake: "N/A",
+          comment: "Reservado para DDNS",
+          endpointAddress: "N/A",
+        });
+      }
+    });
+
+    // Generar disponibles (MC 1-200 que no están usados)
+    for (let i = 1; i <= 200; i++) {
+      if (!usedMCs.has(i)) {
+        const nextWGIP = Array.from({ length: 254 }, (_, idx) => idx + 2)
+          .find(suffix => !usedWGIPs.has(suffix)) || 2;
+        const nextLAN = Array.from({ length: 200 }, (_, idx) => `192.168.${idx + 10}.0/24`)
+          .find(lan => !usedLANs.has(lan)) || "192.168.10.0/24";
+
+        processedPeers.push({
+          id: `available-${i}`,
+          name: `MC${String(i).padStart(2, '0')}`,
+          wgIP: `➡️ 100.100.100.${nextWGIP}`,
+          lans: [`➡️ ${nextLAN}`],
+          status: 'available',
+          lastHandshake: "N/A",
+          comment: "Siguiente disponible",
+          endpointAddress: "N/A",
+        });
+        
+        usedWGIPs.add(nextWGIP);
+        usedLANs.add(nextLAN);
+      }
+    }
+
+    // Ordenar: primero MCs numerados, luego otros
+    return processedPeers.sort((a, b) => {
+      const mcA = a.name.match(/^MC(\d+)/);
+      const mcB = b.name.match(/^MC(\d+)/);
+      
+      if (mcA && mcB) {
+        return parseInt(mcA[1]) - parseInt(mcB[1]);
+      }
+      if (mcA) return -1;
+      if (mcB) return 1;
+      return a.name.localeCompare(b.name);
     });
   };
 
@@ -150,6 +235,7 @@ const MonitorEnlaces = () => {
       'inactive': { variant: 'secondary', label: '⚠️ Inactivo' },
       'reserved-ddns': { variant: 'outline', label: '🔒 DDNS' },
       'static-override': { variant: 'destructive', label: '🌐 Estático' },
+      'available': { variant: 'outline', label: '🆓 Disponible' },
     };
     const config = variants[status] || { variant: 'outline', label: status };
     return <Badge variant={config.variant}>{config.label}</Badge>;
