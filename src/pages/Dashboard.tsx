@@ -25,9 +25,12 @@ const Dashboard = () => {
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-foreground">
-            Sistema MikroTik - Dashboard
-          </h1>
+          <div className="flex items-center gap-4">
+            <img src="/favicon.png" alt="Axend Logo" className="h-10 w-auto" />
+            <h1 className="text-2xl font-bold text-foreground">
+              Sistema MikroTik - Dashboard
+            </h1>
+          </div>
           <Button variant="outline" onClick={handleLogout} className="gap-2">
             <LogOut className="h-4 w-4" />
             Cerrar Sesión

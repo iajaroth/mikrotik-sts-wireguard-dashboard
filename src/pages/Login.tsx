@@ -34,7 +34,10 @@ const Login = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary to-secondary p-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
+        <CardHeader className="space-y-4">
+          <div className="flex justify-center">
+            <img src="/favicon.png" alt="Axend Logo" className="h-16 w-auto" />
+          </div>
           <CardTitle className="text-2xl font-bold text-center">
             Sistema MikroTik
           </CardTitle>
