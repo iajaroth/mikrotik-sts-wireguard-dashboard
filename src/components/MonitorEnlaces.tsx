@@ -110,9 +110,7 @@ const MonitorEnlaces = () => {
         .filter(addr => !addr.includes('100.100.100') && !addr.includes('172.16.100'))
         .map(addr => addr.trim());
 
-      lans.forEach(lan => {
-        if (lan) usedLANs.add(lan);
-      });
+      lans.forEach(lan => usedLANs.add(lan));
 
       const isActive = peer["last-handshake"] && 
                       !peer["last-handshake"].includes('h') && 
