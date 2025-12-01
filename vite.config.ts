@@ -5,11 +5,18 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  base: "/",  // <--- ¡AGREGA ESTO! Sin esto, Coolify se pierde.
+  base: "/",
   server: {
     host: "::",
     port: 8080,
   },
+  // --- ESTE ES EL BLOQUE NUEVO QUE SOLUCIONA EL ERROR ---
+  preview: {
+    port: 80,
+    host: true,
+    allowedHosts: ["mikrotik.sts-systems.online", "vpn.sts-systems.online", "localhost"]
+  },
+  // -----------------------------------------------------
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
