@@ -978,7 +978,7 @@ const ConfigGenerator = () => {
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto whitespace-pre-wrap">
+                      <pre className="bg-slate-950 text-slate-100 p-4 rounded-lg text-xs overflow-x-auto max-h-96 overflow-y-auto">
                         {section.content}
                       </pre>
                     </CardContent>
