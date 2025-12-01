@@ -23,6 +23,7 @@ const ConfigGenerator = () => {
   const [dhcpEnd, setDhcpEnd] = useState("100");
   const [dnsServers, setDnsServers] = useState("8.8.8.8,8.8.4.4");
   const [clientPubKey, setClientPubKey] = useState("");
+  const [clientPrivKey, setClientPrivKey] = useState("");
   const [includeLAN, setIncludeLAN] = useState(false);
   const [setupDNAT, setSetupDNAT] = useState(false);
   const [cameraType, setCameraType] = useState("Dahua");
@@ -195,6 +196,52 @@ const ConfigGenerator = () => {
     });
   };
 
+  const generateWireGuardKeys = async () => {
+    try {
+      // Generar clave privada (32 bytes aleatorios)
+      const privateKeyBytes = new Uint8Array(32);
+      crypto.getRandomValues(privateKeyBytes);
+      
+      // Clamp la clave privada según el estándar Curve25519
+      privateKeyBytes[0] &= 248;
+      privateKeyBytes[31] &= 127;
+      privateKeyBytes[31] |= 64;
+      
+      // Convertir a base64
+      const privateKeyBase64 = btoa(String.fromCharCode(...privateKeyBytes));
+      
+      // Generar clave pública usando la API de crypto
+      const keyPair = await crypto.subtle.generateKey(
+        {
+          name: "X25519",
+          namedCurve: "X25519"
+        },
+        true,
+        ["deriveKey", "deriveBits"]
+      );
+      
+      // Exportar la clave pública
+      const publicKeyRaw = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+      const publicKeyBytes = new Uint8Array(publicKeyRaw);
+      const publicKeyBase64 = btoa(String.fromCharCode(...publicKeyBytes));
+      
+      setClientPrivKey(privateKeyBase64);
+      setClientPubKey(publicKeyBase64);
+      
+      toast({
+        title: "Claves generadas",
+        description: "Par de claves WireGuard generadas exitosamente",
+      });
+    } catch (error) {
+      console.error('Error generando claves:', error);
+      toast({
+        title: "Error",
+        description: "No se pudieron generar las claves. El navegador puede no soportar X25519.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const generateBaseConfig = () => {
     return `# ================================================================
 # CONFIGURACION BASE PARA CLIENTE: ${clientID}
@@ -241,7 +288,7 @@ const ConfigGenerator = () => {
 # IP WireGuard: 100.100.100.${clientIPSuffix}
 # ================================================================
 
-/interface wireguard add name=WIREGUARD-${clientID} listen-port=13231 comment="WireGuard ${clientID}"
+/interface wireguard add name=WIREGUARD-${clientID} listen-port=13231 private-key="${clientPrivKey}" comment="WireGuard ${clientID}"
 /ip address add address=100.100.100.${clientIPSuffix}/24 interface=WIREGUARD-${clientID} comment="WireGuard IP"
 /interface wireguard peers add interface=WIREGUARD-${clientID} name=SERVER-${clientID} comment="Servidor ${clientID}" public-key="${clientPubKey}" endpoint-address="mikrotik-sts.cr-safe.com" endpoint-port=13231 allowed-address="${allowedNetworks}" persistent-keepalive=25s
 /ip route add dst-address=172.16.100.0/24 gateway=100.100.100.1 comment="Ruta WireGuard"
@@ -703,14 +750,32 @@ const ConfigGenerator = () => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="clientPubKey">Llave Pública del Cliente WireGuard *</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="clientPubKey">Llave Pública del Cliente WireGuard *</Label>
+              <Button type="button" size="sm" onClick={generateWireGuardKeys} variant="outline">
+                Generar Claves
+              </Button>
+            </div>
             <Textarea
               id="clientPubKey"
-              placeholder="Pegar la public key generada en el MikroTik"
+              placeholder="Se generará automáticamente o pegar manualmente"
               value={clientPubKey}
               onChange={(e) => setClientPubKey(e.target.value)}
               required
+              rows={2}
             />
+            {clientPrivKey && (
+              <div className="space-y-1">
+                <Label htmlFor="clientPrivKey" className="text-xs">Llave Privada (generada automáticamente)</Label>
+                <Textarea
+                  id="clientPrivKey"
+                  value={clientPrivKey}
+                  readOnly
+                  className="font-mono text-xs bg-muted"
+                  rows={2}
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex items-center space-x-2">
@@ -825,14 +890,32 @@ const ConfigGenerator = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="clientPubKey-wg">Llave Pública del Cliente *</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="clientPubKey-wg">Llave Pública del Cliente *</Label>
+                  <Button type="button" size="sm" onClick={generateWireGuardKeys} variant="outline">
+                    Generar Claves
+                  </Button>
+                </div>
                 <Textarea
                   id="clientPubKey-wg"
-                  placeholder="Pegar la public key generada en el MikroTik"
+                  placeholder="Se generará automáticamente o pegar manualmente"
                   value={clientPubKey}
                   onChange={(e) => setClientPubKey(e.target.value)}
                   required
+                  rows={2}
                 />
+                {clientPrivKey && (
+                  <div className="space-y-1">
+                    <Label htmlFor="clientPrivKey-wg" className="text-xs">Llave Privada (generada automáticamente)</Label>
+                    <Textarea
+                      id="clientPrivKey-wg"
+                      value={clientPrivKey}
+                      readOnly
+                      className="font-mono text-xs bg-muted"
+                      rows={2}
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4">
