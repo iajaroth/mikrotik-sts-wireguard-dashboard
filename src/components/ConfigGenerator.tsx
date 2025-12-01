@@ -14,6 +14,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const ConfigGenerator = () => {
   const { toast } = useToast();
+  const [configMode, setConfigMode] = useState("complete");
   const [clientID, setClientID] = useState("");
   const [clientIPSuffix, setClientIPSuffix] = useState("");
   const [lanNetwork, setLanNetwork] = useState("");
@@ -21,6 +22,7 @@ const ConfigGenerator = () => {
   const [dhcpEnd, setDhcpEnd] = useState("100");
   const [dnsServers, setDnsServers] = useState("8.8.8.8,8.8.4.4");
   const [clientPubKey, setClientPubKey] = useState("");
+  const [includeLAN, setIncludeLAN] = useState(false);
   const [setupDNAT, setSetupDNAT] = useState(false);
   const [cameraType, setCameraType] = useState("Dahua");
   const [numCameras, setNumCameras] = useState(1);
@@ -157,7 +159,10 @@ const ConfigGenerator = () => {
   };
 
   const generateWireGuardConfig = () => {
-    const allowedNetworks = `172.16.100.0/24,100.100.100.1/32,${lanNetwork}.0/24`;
+    let allowedNetworks = "172.16.100.0/24,100.100.100.1/32";
+    if (configMode === "complete" || (configMode === "wireguard" && includeLAN && lanNetwork)) {
+      allowedNetworks += `,${lanNetwork}.0/24`;
+    }
     
     return `
 # ================================================================
@@ -177,7 +182,8 @@ const ConfigGenerator = () => {
   };
 
   const generateDNATConfig = () => {
-    if (!setupDNAT) return "";
+    if (configMode === "complete" && !setupDNAT) return "";
+    if (configMode === "dnat" && cameraIPs.filter(ip => ip.trim()).length === 0) return "";
 
     const portBase = 8000 + (parseInt(clientIPSuffix) * 10);
     let config = `
@@ -189,6 +195,7 @@ const ConfigGenerator = () => {
 `;
 
     cameraIPs.forEach((ip, i) => {
+      if (!ip.trim()) return;
       const cameraNum = i + 1;
       const httpPort = portBase + cameraNum;
       const rtspPort = portBase + cameraNum + 50;
@@ -208,17 +215,50 @@ const ConfigGenerator = () => {
   const handleGenerate = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!clientID || !clientIPSuffix || !lanNetwork || !clientPubKey) {
-      toast({
-        title: "Error",
-        description: "Por favor complete todos los campos requeridos",
-        variant: "destructive",
-      });
-      return;
+    // Validación según modo
+    if (configMode === "complete") {
+      if (!clientID || !clientIPSuffix || !lanNetwork || !clientPubKey) {
+        toast({
+          title: "Error",
+          description: "Por favor complete todos los campos requeridos",
+          variant: "destructive",
+        });
+        return;
+      }
+      const config = generateBaseConfig() + generateWireGuardConfig() + generateDNATConfig();
+      setGeneratedConfig(config);
+    } else if (configMode === "wireguard") {
+      if (!clientID || !clientIPSuffix || !clientPubKey) {
+        toast({
+          title: "Error",
+          description: "Por favor complete ID del Cliente, Sufijo IP y Llave Pública",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (includeLAN && !lanNetwork) {
+        toast({
+          title: "Error",
+          description: "Por favor especifique la red LAN",
+          variant: "destructive",
+        });
+        return;
+      }
+      const config = generateWireGuardConfig();
+      setGeneratedConfig(config);
+    } else if (configMode === "dnat") {
+      if (!clientID || !clientIPSuffix) {
+        toast({
+          title: "Error",
+          description: "Por favor complete ID del Cliente y Sufijo IP",
+          variant: "destructive",
+        });
+        return;
+      }
+      const config = generateDNATConfig();
+      setGeneratedConfig(config);
     }
 
-    const config = generateBaseConfig() + generateWireGuardConfig() + generateDNATConfig();
-    setGeneratedConfig(config);
     setShowResults(true);
   };
 
@@ -249,20 +289,28 @@ const ConfigGenerator = () => {
         <CardDescription>WireGuard + DNAT + Watchdog Non-Intrusive</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleGenerate} className="space-y-6">
-          {suggestedMC && suggestedIP && suggestedLAN && !loadingSuggestion && (
-            <Alert className="bg-primary/5 border-primary/20">
-              <Lightbulb className="h-4 w-4" />
-              <AlertDescription className="flex items-center justify-between">
-                <span>
-                  Siguiente disponible: <strong>MC{String(suggestedMC).padStart(2, '0')}</strong>, <strong>IP 100.100.100.{suggestedIP}</strong> y <strong>LAN {suggestedLAN}.0/24</strong>
-                </span>
-                <Button type="button" size="sm" onClick={applySuggestion}>
-                  Usar Sugerencia
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
+        <Tabs value={configMode} onValueChange={setConfigMode} className="mb-6">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="complete">Configuración Completa</TabsTrigger>
+            <TabsTrigger value="wireguard">Solo WireGuard</TabsTrigger>
+            <TabsTrigger value="dnat">Solo DNAT</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="complete" className="mt-6">
+            <form onSubmit={handleGenerate} className="space-y-6">
+              {suggestedMC && suggestedIP && suggestedLAN && !loadingSuggestion && (
+                <Alert className="bg-primary/5 border-primary/20">
+                  <Lightbulb className="h-4 w-4" />
+                  <AlertDescription className="flex items-center justify-between">
+                    <span>
+                      Siguiente disponible: <strong>MC{String(suggestedMC).padStart(2, '0')}</strong>, <strong>IP 100.100.100.{suggestedIP}</strong> y <strong>LAN {suggestedLAN}.0/24</strong>
+                    </span>
+                    <Button type="button" size="sm" onClick={applySuggestion}>
+                      Usar Sugerencia
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -403,10 +451,188 @@ const ConfigGenerator = () => {
             </div>
           )}
 
-          <Button type="submit" className="w-full">
-            Generar Configuración
-          </Button>
-        </form>
+              <Button type="submit" className="w-full">
+                Generar Configuración
+              </Button>
+            </form>
+          </TabsContent>
+
+          <TabsContent value="wireguard" className="mt-6">
+            <Alert className="bg-info/10 border-info/20 mb-6">
+              <AlertDescription>
+                Esta opción genera solo la configuración de WireGuard para agregar a un MikroTik existente
+              </AlertDescription>
+            </Alert>
+
+            <form onSubmit={handleGenerate} className="space-y-6">
+              {suggestedMC && suggestedIP && suggestedLAN && !loadingSuggestion && (
+                <Alert className="bg-primary/5 border-primary/20">
+                  <Lightbulb className="h-4 w-4" />
+                  <AlertDescription className="flex items-center justify-between">
+                    <span>
+                      Siguiente disponible: <strong>MC{String(suggestedMC).padStart(2, '0')}</strong>, <strong>IP 100.100.100.{suggestedIP}</strong> y <strong>LAN {suggestedLAN}.0/24</strong>
+                    </span>
+                    <Button type="button" size="sm" onClick={applySuggestion}>
+                      Usar Sugerencia
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="clientID-wg">ID del Cliente *</Label>
+                  <Input
+                    id="clientID-wg"
+                    placeholder="Ej: MC30, MC47-MONTAIN, SI07-A"
+                    value={clientID}
+                    onChange={(e) => setClientID(e.target.value)}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">Formato: 2-4 letras + números + letras opcionales</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="clientIPSuffix-wg">Sufijo IP WireGuard *</Label>
+                  <Input
+                    id="clientIPSuffix-wg"
+                    type="number"
+                    placeholder="30"
+                    min="1"
+                    max="254"
+                    value={clientIPSuffix}
+                    onChange={(e) => setClientIPSuffix(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="clientPubKey-wg">Llave Pública del Cliente *</Label>
+                <Textarea
+                  id="clientPubKey-wg"
+                  placeholder="Pegar la public key generada en el MikroTik"
+                  value={clientPubKey}
+                  onChange={(e) => setClientPubKey(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="includeLAN"
+                    checked={includeLAN}
+                    onCheckedChange={(checked) => setIncludeLAN(checked as boolean)}
+                  />
+                  <Label htmlFor="includeLAN" className="cursor-pointer">
+                    Incluir red LAN en configuración
+                  </Label>
+                </div>
+
+                {includeLAN && (
+                  <div className="space-y-2">
+                    <Label htmlFor="lanNetwork-wg">Red LAN (3 primeros octetos) *</Label>
+                    <Input
+                      id="lanNetwork-wg"
+                      placeholder="192.168.28"
+                      value={lanNetwork}
+                      onChange={(e) => setLanNetwork(e.target.value)}
+                      required={includeLAN}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <Button type="submit" className="w-full">
+                Generar WireGuard
+              </Button>
+            </form>
+          </TabsContent>
+
+          <TabsContent value="dnat" className="mt-6">
+            <Alert className="bg-info/10 border-info/20 mb-6">
+              <AlertDescription>
+                Esta opción genera solo reglas DNAT para agregar cámaras a una configuración existente
+              </AlertDescription>
+            </Alert>
+
+            <form onSubmit={handleGenerate} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="clientID-dnat">ID del Cliente *</Label>
+                  <Input
+                    id="clientID-dnat"
+                    placeholder="Ej: MC30, MC47-MONTAIN, SI07-A"
+                    value={clientID}
+                    onChange={(e) => setClientID(e.target.value)}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">Formato: 2-4 letras + números + letras opcionales</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="clientIPSuffix-dnat">Sufijo IP WireGuard *</Label>
+                  <Input
+                    id="clientIPSuffix-dnat"
+                    type="number"
+                    placeholder="30"
+                    min="1"
+                    max="254"
+                    value={clientIPSuffix}
+                    onChange={(e) => setClientIPSuffix(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4 p-4 border rounded-lg">
+                <div className="space-y-2">
+                  <Label htmlFor="cameraType-dnat">Tipo de Cámaras *</Label>
+                  <Select value={cameraType} onValueChange={setCameraType}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Dahua">Dahua</SelectItem>
+                      <SelectItem value="Hikvision">Hikvision</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="numCameras-dnat">Número de Cámaras *</Label>
+                  <Input
+                    id="numCameras-dnat"
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={numCameras}
+                    onChange={(e) => setNumCameras(parseInt(e.target.value) || 1)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>IPs de las Cámaras</Label>
+                  {cameraIPs.map((ip, index) => (
+                    <Input
+                      key={index}
+                      placeholder={`Cámara ${index + 1}: 192.168.28.101`}
+                      value={ip}
+                      onChange={(e) => {
+                        const newIPs = [...cameraIPs];
+                        newIPs[index] = e.target.value;
+                        setCameraIPs(newIPs);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <Button type="submit" className="w-full">
+                Generar DNAT
+              </Button>
+            </form>
+          </TabsContent>
+        </Tabs>
 
         {showResults && (
           <div className="mt-6 space-y-4">
