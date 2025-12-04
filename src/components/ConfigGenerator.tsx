@@ -12,6 +12,10 @@ import { Copy, Download, Lightbulb, FileText, CheckCircle2 } from "lucide-react"
 import { supabase } from "@/integrations/supabase/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
+import nacl from "tweetnacl";
+
+// Clave pública fija del servidor WireGuard
+const SERVER_PUBLIC_KEY = "F3o4DvZO1WJCoxS9jQOAD1K2+9CXIw6WAyL1LTNsCQg=";
 
 const ConfigGenerator = () => {
   const { toast } = useToast();
@@ -196,34 +200,14 @@ const ConfigGenerator = () => {
     });
   };
 
-  const generateWireGuardKeys = async () => {
+  const generateWireGuardKeys = () => {
     try {
-      // Generar clave privada (32 bytes aleatorios)
-      const privateKeyBytes = new Uint8Array(32);
-      crypto.getRandomValues(privateKeyBytes);
-      
-      // Clamp la clave privada según el estándar Curve25519
-      privateKeyBytes[0] &= 248;
-      privateKeyBytes[31] &= 127;
-      privateKeyBytes[31] |= 64;
+      // Generar par de claves usando tweetnacl (Curve25519)
+      const keyPair = nacl.box.keyPair();
       
       // Convertir a base64
-      const privateKeyBase64 = btoa(String.fromCharCode(...privateKeyBytes));
-      
-      // Generar clave pública usando la API de crypto
-      const keyPair = await crypto.subtle.generateKey(
-        {
-          name: "X25519",
-          namedCurve: "X25519"
-        },
-        true,
-        ["deriveKey", "deriveBits"]
-      );
-      
-      // Exportar la clave pública
-      const publicKeyRaw = await crypto.subtle.exportKey("raw", keyPair.publicKey);
-      const publicKeyBytes = new Uint8Array(publicKeyRaw);
-      const publicKeyBase64 = btoa(String.fromCharCode(...publicKeyBytes));
+      const privateKeyBase64 = btoa(String.fromCharCode(...keyPair.secretKey));
+      const publicKeyBase64 = btoa(String.fromCharCode(...keyPair.publicKey));
       
       setClientPrivKey(privateKeyBase64);
       setClientPubKey(publicKeyBase64);
@@ -236,7 +220,7 @@ const ConfigGenerator = () => {
       console.error('Error generando claves:', error);
       toast({
         title: "Error",
-        description: "No se pudieron generar las claves. El navegador puede no soportar X25519.",
+        description: "No se pudieron generar las claves.",
         variant: "destructive",
       });
     }
@@ -290,7 +274,7 @@ const ConfigGenerator = () => {
 
 /interface wireguard add name=WIREGUARD-${clientID} listen-port=13231 private-key="${clientPrivKey}" comment="WireGuard ${clientID}"
 /ip address add address=100.100.100.${clientIPSuffix}/24 interface=WIREGUARD-${clientID} comment="WireGuard IP"
-/interface wireguard peers add interface=WIREGUARD-${clientID} name=SERVER-${clientID} comment="Servidor ${clientID}" public-key="${clientPubKey}" endpoint-address="mikrotik-sts.cr-safe.com" endpoint-port=13231 allowed-address="${allowedNetworks}" persistent-keepalive=25s
+/interface wireguard peers add interface=WIREGUARD-${clientID} name=SERVER-${clientID} comment="Servidor ${clientID}" public-key="${SERVER_PUBLIC_KEY}" endpoint-address="mikrotik-sts.cr-safe.com" endpoint-port=13231 allowed-address="${allowedNetworks}" persistent-keepalive=25s
 /ip route add dst-address=172.16.100.0/24 gateway=100.100.100.1 comment="Ruta WireGuard"
 
 /ip firewall filter add chain=forward in-interface=WIREGUARD-${clientID} out-interface=LAN-Bridge action=accept comment="WG->LAN ${clientID}"
