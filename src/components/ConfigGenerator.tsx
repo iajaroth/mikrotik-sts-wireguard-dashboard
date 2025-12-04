@@ -314,12 +314,15 @@ const ConfigGenerator = () => {
   };
 
   const generateWatchdogConfig = () => {
-    return `# WATCHDOG NO INTRUSIVO - RESET DE SOCKET UDP (PORT TOGGLE)
+    return `# ================================================================
+# WATCHDOG NO INTRUSIVO - RESET DE SOCKET UDP (PORT TOGGLE)
 # En lugar de apagar la interfaz, cambiamos el puerto de escucha
 # para forzar al kernel a reiniciar el socket UDP sin tirar la interfaz.
 # ================================================================
 
-# Script: Monitorizacion y Port Toggle
+# ============================================================
+# SCRIPT 1: WATCHDOG SOCKET RESET (Port Toggle cada 2 minutos)
+# ============================================================
 /system script add name=watchdog-wg-socket-reset policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source={
 :local wgInterface "WIREGUARD-${clientID}"
 :local serverIP "100.100.100.1"
@@ -352,7 +355,9 @@ const ConfigGenerator = () => {
 # Si el ping funciona, no hacemos nada (silencioso)
 }
 
-# Script Critico: Reinicio del Sistema (Failsafe 3h)
+# ============================================================
+# SCRIPT 2: WATCHDOG SYSTEM REBOOT (Failsafe cada 3 horas)
+# ============================================================
 /system script add name=watchdog-system-reboot policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source={
 :local serverIP "100.100.100.1"
 :local clientID "${clientID}"
@@ -364,41 +369,15 @@ const ConfigGenerator = () => {
 }
 }
 
-# ================================================================
-# VERIFICAR Y CONFIGURAR DEVICE-MODE
-# ================================================================
+# ============================================================
+# CREAR TAREAS PROGRAMADAS (SCHEDULER)
+# ============================================================
 
-:local currentMode [/system device-mode get mode]
-:if (\\$currentMode != "disabled") do={
-    :put "ADVERTENCIA: Device-mode debe ser 'disabled'. Ejecute: /system device-mode update mode=disabled"
-    :error "Modo restrictivo detectado"
-}
+# Scheduler 1: Monitor WG - Port Toggle cada 2 minutos
+/system scheduler add name=watchdog-socket-scheduler comment="Monitor WG - Port Toggle cada 2 min" start-time=startup interval=00:02:00 on-event=watchdog-wg-socket-reset policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon
 
-# ================================================================
-# CREAR TAREAS PROGRAMADAS
-# ================================================================
-
-# Limpiar tareas antiguas
-:do { /system scheduler remove [find name=watchdog-down-scheduler] } on-error={}
-:do { /system scheduler remove [find name=watchdog-up-scheduler] } on-error={}
-:do { /system scheduler remove [find name=watchdog-monitor-scheduler] } on-error={}
-
-:put "Creando tareas de monitoreo..."
-
-# Tarea Principal: Corre cada 2 minutos
-:do {
-    /system scheduler add name=watchdog-socket-scheduler interval=2m on-event=watchdog-wg-socket-reset start-time=startup comment="Monitor WG - Port Toggle cada 2 min"
-    :put "  [OK] Monitor Socket Reset creado (2 min)"
-} on-error={ :put "  [ERROR] Fallo al crear monitor scheduler" }
-
-# Tarea Critica: Corre cada 3 horas
-:do {
-    /system scheduler add name=watchdog-system-critical interval=3h on-event=watchdog-system-reboot start-time=startup comment="Reinicio critico si falla todo"
-    :put "  [OK] Watchdog Critico creado (3 horas)"
-} on-error={ :put "  [ERROR] Fallo al crear critical scheduler" }
-
-:put ""
-:put "WATCHDOG NO INTRUSIVO CONFIGURADO"`;
+# Scheduler 2: Reinicio critico si falla todo (cada 3 horas)
+/system scheduler add name=watchdog-system-critical comment="Reinicio critico si falla todo" start-time=startup interval=03:00:00 on-event=watchdog-system-reboot policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon`;
   };
 
   const generateServerCommands = () => {
