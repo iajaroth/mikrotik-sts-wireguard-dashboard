@@ -10,13 +10,10 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
   },
-  // --- ESTE ES EL BLOQUE NUEVO QUE SOLUCIONA EL ERROR ---
-  preview: {
-    port: 80,
-    host: true,
-    allowedHosts: ["mikrotik.sts-systems.online", "vpn.sts-systems.online", "localhost"]
+  build: {
+    outDir: "dist",
+    sourcemap: false,
   },
-  // -----------------------------------------------------
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
